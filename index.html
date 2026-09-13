@@ -48,26 +48,36 @@
 
 /* ---------- persistence ---------- */
 var STORE_KEY = 'cutmeso.state.v1';
+function genFriendId(){
+  var letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ', s = '';
+  for (var i = 0; i < 3; i++) s += letters[Math.floor(Math.random() * letters.length)];
+  return s + '-' + Math.floor(1000 + Math.random() * 9000);
+}
 function loadState(){
+  // A brand-new account starts empty: zero logs, zero history, no seeded
+  // exercises/weights. The only "defaults" here are app settings (rest
+  // timer length, mesocycle length, phase) — never anything that reads
+  // like the user's own recorded data.
+  var jsIdx = (new Date().getDay() + 6) % 7; // Mon=0 .. Sun=6, matches weekLog order
   var defaults = {
-    tab: 'dash', day: 'D1', exIdx: 0, setsN: 3, kcal: 1840, phase: null,
+    tab: 'dash', day: 'D1', exIdx: 0, setsN: 3, kcal: 0, phase: null,
     pickerMode: null, muscle: 'All', openId: null, saved: [], custom: {},
-    rest: 150, restOpen: false, weeks: 6, week: 3, deload: true,
+    rest: 150, restOpen: false, weeks: 6, week: 1, deload: true,
     myEx: null, createOpen: false, query: '', draft: { n: '', m: '', e: '', w: '', note: '' },
-    dayMeta: null, supersets: {}, types: {}, nutMode: 'Consumed', wkDay: 3,
+    dayMeta: null, supersets: {}, types: {}, nutMode: 'Consumed', wkDay: jsIdx,
     vals: {}, doneSet: {}, menuKey: null, confirmOpen: false,
     photoSlots: [{ label: 'Week 1', src: '' }, { label: 'Week 6', src: '' }],
-    weightDraft: '', weightLog: [
-      { d: 'Sep 09', kg: 84.8 }, { d: 'Sep 10', kg: 84.5 },
-      { d: 'Sep 11', kg: 84.3 }, { d: 'Sep 12', kg: 84.2 }
-    ],
+    weightDraft: '', weightLog: [],
+    loggedMeals: [], friendId: genFriendId(),
     delMeals: [], delMeasures: [], delHist: []
   };
   try {
     var raw = localStorage.getItem(STORE_KEY);
     if (!raw) return defaults;
     var saved = JSON.parse(raw);
-    return Object.assign({}, defaults, saved);
+    var merged = Object.assign({}, defaults, saved);
+    if (!merged.friendId) merged.friendId = defaults.friendId;
+    return merged;
   } catch (e) { return defaults; }
 }
 var S = loadState();
@@ -106,34 +116,16 @@ function computeVM(){
   var unit = UNIT;
   var phase = S.phase || 'Cut';
 
+  // A fresh mesocycle ships with empty day slots only — no seeded exercises,
+  // weights, or "previous" numbers. Users build their own program from
+  // scratch via "+ Add day" / "+ Add exercise" / "Create my own exercise".
   var defaults = [
-    { id: 'D1', t: 'Upper Heavy', ex: [
-      { n: 'Barbell Bench Press', tags: 'Chest · Barbell', prev: '100 × 10', w: '102.5' },
-      { n: 'Weighted Pull-Up', tags: 'Back · Bodyweight', prev: '+20 × 8', w: '22.5' },
-      { n: 'Overhead Press', tags: 'Shoulders · Barbell', prev: '60 × 9', w: '62.5' },
-      { n: 'Barbell Row', tags: 'Back · Barbell', prev: '90 × 10', w: '92.5' },
-      { n: 'Close-Grip Bench', tags: 'Triceps · Barbell', prev: '80 × 10', w: '82.5' } ] },
-    { id: 'D2', t: 'Lower Heavy', ex: [
-      { n: 'Back Squat', tags: 'Quads · Barbell', prev: '140 × 8', w: '142.5' },
-      { n: 'Romanian Deadlift', tags: 'Hamstrings · Barbell', prev: '120 × 10', w: '122.5' },
-      { n: 'Leg Press', tags: 'Quads · Machine', prev: '200 × 12', w: '205' },
-      { n: 'Standing Calf Raise', tags: 'Calves · Machine', prev: '90 × 15', w: '92.5' } ] },
-    { id: 'D3', t: 'Upper Light', ex: [
-      { n: 'Incline DB Press', tags: 'Chest · Dumbbells', prev: '32 × 12', w: '34' },
-      { n: 'Lat Pulldown', tags: 'Back · Cable', prev: '75 × 12', w: '77.5' },
-      { n: 'Cable Lateral Raise', tags: 'Shoulders · Cable', prev: '12 × 15', w: '12.5' } ] },
-    { id: 'D4', t: 'Lower Light', ex: [
-      { n: 'Hack Squat', tags: 'Quads · Machine', prev: '110 × 12', w: '112.5' },
-      { n: 'Seated Leg Curl', tags: 'Hamstrings · Machine', prev: '60 × 12', w: '62.5' },
-      { n: 'Hip Thrust', tags: 'Glutes · Barbell', prev: '130 × 12', w: '135' } ] },
-    { id: 'D5', t: 'Arms & Core', ex: [
-      { n: 'Barbell Curl', tags: 'Biceps · Barbell', prev: '40 × 10', w: '42.5' },
-      { n: 'Skull Crusher', tags: 'Triceps · Barbell', prev: '45 × 10', w: '47.5' },
-      { n: 'Hanging Leg Raise', tags: 'Abs · Bodyweight', prev: 'bodyweight × 12', w: '5' } ] },
-    { id: 'D6', t: 'Weak Points', ex: [
-      { n: 'Face Pull', tags: 'Rear delts · Cable', prev: '25 × 15', w: '27.5' },
-      { n: 'Neck Extension', tags: 'Neck · Machine', prev: '15 × 15', w: '15' },
-      { n: 'Wrist Curl', tags: 'Forearms · Barbell', prev: '20 × 15', w: '22.5' } ] }
+    { id: 'D1', t: 'Day 1', ex: [] },
+    { id: 'D2', t: 'Day 2', ex: [] },
+    { id: 'D3', t: 'Day 3', ex: [] },
+    { id: 'D4', t: 'Day 4', ex: [] },
+    { id: 'D5', t: 'Day 5', ex: [] },
+    { id: 'D6', t: 'Day 6', ex: [] }
   ];
 
   var meta = S.dayMeta || defaults.map(function(d){ return { id: d.id, t: d.t, note: '' }; });
@@ -248,52 +240,37 @@ function computeVM(){
   var kcalFor = function(p){ return p === 'Bulk' ? 3050 : p === 'Maintain' ? 2650 : 2200; };
   var kcalGoal = kcalFor(phase);
 
-  var macros = [
-    { label: 'Protein', val: '168 / 180 g', pct: '93%', color: '#d9705e' },
-    { label: 'Carbs', val: '182 g', pct: '74%', color: '#d9a84e' },
-    { label: 'Fat', val: '54 g', pct: '68%', color: '#6fbf8f' }
-  ];
+  // Quick-add catalog: reference nutrition facts (roughly per typical
+  // serving), not the user's own data — always available, unlike anything
+  // logged. p/c/f let the macro summary below be real once something is
+  // actually logged, instead of a fixed fake percentage.
   var foods = [
-    { n: 'Chicken breast', k: '165' }, { n: 'Skyr', k: '63' }, { n: 'Egg', k: '143' },
-    { n: 'White rice', k: '130' }, { n: 'Salmon', k: '208' }, { n: 'Banana', k: '89' }
+    { n: 'Chicken breast', k: 165, p: 31, c: 0, f: 3.6 }, { n: 'Skyr', k: 63, p: 11, c: 4, f: 0.2 },
+    { n: 'Egg', k: 143, p: 12, c: 1, f: 10 }, { n: 'White rice', k: 130, p: 2.7, c: 28, f: 0.3 },
+    { n: 'Salmon', k: 208, p: 20, c: 0, f: 13 }, { n: 'Banana', k: 89, p: 1.1, c: 23, f: 0.3 }
   ];
 
-  var zones = [
-    { m: 'Chest', sets: 16, zone: 'MAV', pct: '72%', color: '#f2f2f3' },
-    { m: 'Back', sets: 20, zone: 'MAV', pct: '80%', color: '#f2f2f3' },
-    { m: 'Quads', sets: 13, zone: 'MEV', pct: '48%', color: '#8d8d92' },
-    { m: 'Shoulders', sets: 22, zone: 'at MRV', pct: '94%', color: '#d9a84e' },
-    { m: 'Biceps', sets: 9, zone: 'below MEV', pct: '32%', color: '#5e5e64' }
-  ];
-
-  var mealsAll = [
-    { id: 'm1', n: 'Plain skyr', meta: '400 g · P 44 · C 16 · F 0.8', k: '252' },
-    { id: 'm2', n: 'Chicken breast', meta: '250 g · P 78 · C 0 · F 9', k: '413' },
-    { id: 'm3', n: 'White rice, cooked', meta: '300 g · P 8 · C 84 · F 1', k: '390' },
-    { id: 'm4', n: 'Oats + banana', meta: '80 g + 1 pc · P 11 · C 77 · F 6', k: '392' }
-  ];
-  var measuresAll = [
-    { k: 'Chest', v: '106 cm', d: '−1.0' },
-    { k: 'Waist', v: '84 cm', d: '−2.5' },
-    { k: 'Biceps', v: '38.5 cm', d: '−0.2' },
-    { k: 'Thigh', v: '61 cm', d: '−0.8' }
-  ];
   var mmss = function(sec){ return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
   var weeks = S.weeks, week = Math.min(S.week, weeks);
   var rirTarget = S.deload && week === weeks ? '4' : String(Math.max(0, 3 - (week - 1)));
   var fmt = function(n){ return Math.round(n).toLocaleString('en-US').replace(/,/g, ' '); };
 
   var kcalToday = S.kcal;
-  var weekLog = [
-    { d: 'M', k: 2180, p: 172, c: 214, f: 58 },
-    { d: 'T', k: 2260, p: 181, c: 226, f: 61 },
-    { d: 'W', k: 2050, p: 165, c: 198, f: 54 },
-    { d: 'T', k: kcalToday, p: 168, c: 182, f: 54 },
-    { d: 'F', k: 0, p: 0, c: 0, f: 0 },
-    { d: 'S', k: 0, p: 0, c: 0, f: 0 },
-    { d: 'S', k: 0, p: 0, c: 0, f: 0 }
-  ];
+  // Only "today" (real weekday) carries live data; the rest of the week
+  // starts at zero until the user actually logs something on that day.
+  var weekDayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  var loggedP = S.loggedMeals.filter(function(m){ return S.delMeals.indexOf(m.id) < 0; }).reduce(function(a, m){ return a + (m.p || 0); }, 0);
+  var loggedC = S.loggedMeals.filter(function(m){ return S.delMeals.indexOf(m.id) < 0; }).reduce(function(a, m){ return a + (m.c || 0); }, 0);
+  var loggedF = S.loggedMeals.filter(function(m){ return S.delMeals.indexOf(m.id) < 0; }).reduce(function(a, m){ return a + (m.f || 0); }, 0);
+  var weekLog = weekDayLabels.map(function(d, i){
+    return i === S.wkDay ? { d: d, k: kcalToday, p: loggedP, c: loggedC, f: loggedF } : { d: d, k: 0, p: 0, c: 0, f: 0 };
+  });
   var goalsMacro = { k: kcalGoal, p: 180, c: 230, f: 62 };
+  var macros = [
+    { label: 'Protein', val: Math.round(loggedP) + ' / ' + goalsMacro.p + ' g', pct: Math.min(100, Math.round(loggedP / goalsMacro.p * 100)) + '%', color: '#d9705e' },
+    { label: 'Carbs', val: Math.round(loggedC) + ' / ' + goalsMacro.c + ' g', pct: Math.min(100, Math.round(loggedC / goalsMacro.c * 100)) + '%', color: '#d9a84e' },
+    { label: 'Fat', val: Math.round(loggedF) + ' / ' + goalsMacro.f + ' g', pct: Math.min(100, Math.round(loggedF / goalsMacro.f * 100)) + '%', color: '#6fbf8f' }
+  ];
   var remaining = S.nutMode === 'Remaining';
   var sel = Math.min(S.wkDay, 6);
   var metricDefs = [
@@ -379,19 +356,13 @@ function computeVM(){
     S.exIdx = replacing ? Math.max(0, idx) : list.length - 1;
   };
 
-  var seeded = [
-    { id: 'D1', t: 'Upper Heavy', date: 'Sep 09', meta: (at(0).ex.length * 3) + ' sets · ' + fmt(d1.prev) + ' ' + unit + ' · RIR 1.4', delta: '+3.1 %', label: 'tonnage', color: up },
-    { id: 'D2', t: 'Lower Heavy', date: 'Sep 08', meta: '12 sets · ' + fmt(tonsOf(at(1)).prev) + ' ' + unit + ' · RIR 1.8', delta: '+1.4 %', label: 'tonnage', color: up },
-    { id: 'D5', t: 'Arms & Core', date: 'Sep 06', meta: '9 sets · ' + fmt(tonsOf(at(4)).prev) + ' ' + unit + ' · RIR 0.9', delta: '−2.0 %', label: 'tonnage', color: down },
-    { id: 'D3', t: 'Upper Light', date: 'Sep 05', meta: '9 sets · ' + fmt(tonsOf(at(2)).prev) + ' ' + unit + ' · RIR 2.1', delta: '+0.8 %', label: 'tonnage', color: up },
-    { id: 'D4', t: 'Lower Light', date: 'Sep 04', meta: '9 sets · ' + fmt(tonsOf(at(3)).prev) + ' ' + unit + ' · RIR 2.0', delta: '−1.1 %', label: 'tonnage', color: down }
-  ];
+  // No seeded history: a fresh account has logged nothing yet, so the list
+  // is exactly what the user has actually saved.
   var wl = S.weightLog;
   var recent = wl.slice(-7);
-  var bodyAvg = recent.length ? recent.reduce(function(a, w){ return a + w.kg; }, 0) / recent.length : 84.2;
-  var weightTrend = wl.length > 1 ? wl[wl.length - 1].kg - wl[0].kg : -0.6;
-  var weeklyRate = wl.length > 1 ? weightTrend / Math.max(1, (wl.length - 1) / 7) : -0.6;
-  var weeksLeft = Math.max(1, Math.ceil(Math.abs((bodyAvg - 82) / (weeklyRate || -0.6))));
+  var bodyAvg = recent.length ? recent.reduce(function(a, w){ return a + w.kg; }, 0) / recent.length : 0;
+  var weightTrend = wl.length > 1 ? wl[wl.length - 1].kg - wl[0].kg : 0;
+  var weeklyRate = wl.length > 1 ? weightTrend / Math.max(1, (wl.length - 1) / 7) : 0;
 
   var baseDay = defaults.filter(function(d){ return d.id === day.id; })[0];
   var baseNames = baseDay ? baseDay.ex.map(function(e){ return e.n; }) : [];
@@ -415,9 +386,9 @@ function computeVM(){
     S.tab = 'history'; S.openId = null; S.confirmOpen = false;
   };
 
-  var history = S.saved.concat(seeded)
+  var history = S.saved
     .filter(function(h){ return S.delHist.indexOf(h.id + h.date) < 0; });
-  var open = history[S.openId || 0] || history[0];
+  var open = history[S.openId || 0] || history[0] || { id: day.id, t: day.t, date: '', meta: '', delta: '+0.0 %', label: '', color: muted };
   var openDay = dayDefs.filter(function(d){ return d.id === open.id; })[0] || day;
 
   return {
@@ -437,14 +408,16 @@ function computeVM(){
     phaseLabel: phase + ' · MESO 2',
     phaseShort: phase,
     unitLabel: unit,
-    dashSessions: '3 / 5',
-    dashTonnage: fmt(ton * 3) + ' ' + unit,
+    dashSessions: String(history.length),
+    dashTonnage: fmt(ton) + ' ' + unit,
     dashNext: day.ex.length + ' exercises · ' + (day.note || 'target RIR ' + rirTarget),
     calPctLabel: calPct + '%',
     calDots: calDots,
-    calNote: kcalToday > kcalGoal
-      ? fmt(kcalToday - kcalGoal) + ' kcal over target — trim carbs at dinner.'
-      : fmt(kcalGoal - kcalToday) + ' kcal left today · protein 168 / 180 g',
+    calNote: kcalToday === 0
+      ? 'Nothing logged yet today.'
+      : kcalToday > kcalGoal
+      ? fmt(kcalToday - kcalGoal) + ' kcal over target.'
+      : fmt(kcalGoal - kcalToday) + ' kcal left today · protein ' + Math.round(loggedP) + ' / ' + goalsMacro.p + ' g',
     nutRows: nutRows,
     nutModes: ['Consumed', 'Remaining'].map(function(m){
       return {
@@ -469,6 +442,7 @@ function computeVM(){
         go: function(){ S.tab = 'workout'; S.day = d.id; S.exIdx = 0; S.doneSet = {}; S.vals = {}; S.menuKey = null; S.setsN = 3; }
       };
     }),
+    dayEmpty: day.ex.length === 0,
     exName: grpEx.length > 1 ? 'Superset · ' + grpEx.map(function(e){ return e.n; }).join(' + ') : ex.n,
     exTags: grpEx.length > 1 ? grpEx.length + ' exercises back to back, rest after the round' : ex.tags,
     isSuperset: grpEx.length > 1,
@@ -533,19 +507,29 @@ function computeVM(){
     kcalGoal: String(kcalGoal),
     kcalPct: calPct + '%',
     macros: macros,
-    chips: foods.map(function(f){ return { n: f.n, k: f.k, go: function(){ S.kcal = S.kcal + Number(f.k); } }; }),
-    meals: mealsAll.filter(function(m){ return S.delMeals.indexOf(m.id) < 0; }).map(function(m){
-      return Object.assign({}, m, { del: function(){ S.delMeals = S.delMeals.concat([m.id]); S.kcal = Math.max(0, S.kcal - Number(m.k)); } });
+    chips: foods.map(function(f){
+      return { n: f.n, k: String(f.k), go: function(){
+        S.kcal = S.kcal + f.k;
+        S.loggedMeals = S.loggedMeals.concat([{ id: 'm' + Date.now() + Math.floor(Math.random() * 1000), n: f.n, meta: 'quick add', k: f.k, p: f.p, c: f.c, f: f.f }]);
+      } };
     }),
-    coachText: 'Bench Press is up 2.5 %, but RIR hit 0 on the second set — earlier than planned. Shoulders sit at 22 sets, right at MRV. Next week: hold the load, drop two shoulder sets.',
-    volume: zones,
-    weekStats: [
-      { k: 'Total sets', v: '84 vs 78' },
-      { k: 'Sessions', v: '5 days' },
-      { k: 'Sets past RIR target', v: '3' },
-      { k: 'Calories, average', v: '2 180 vs ' + fmt(kcalGoal) + ' goal' },
-      { k: 'Weight change', v: '−0.6 ' + unit }
-    ],
+    meals: S.loggedMeals.filter(function(m){ return S.delMeals.indexOf(m.id) < 0; }).map(function(m){
+      return { id: m.id, n: m.n, meta: m.meta, k: String(m.k),
+        del: function(){ S.delMeals = S.delMeals.concat([m.id]); S.kcal = Math.max(0, S.kcal - Number(m.k)); } };
+    }),
+    mealsEmpty: S.loggedMeals.filter(function(m){ return S.delMeals.indexOf(m.id) < 0; }).length === 0,
+    coachText: history.length === 0
+      ? 'Log a few sessions and meals and the AI coach will start picking up trends here — progress, RIR drift, deload timing.'
+      : 'You’ve logged ' + history.length + ' session' + (history.length === 1 ? '' : 's') + ' so far. Keep logging consistently to build enough trend data for coaching insights.',
+    volume: [],
+    volumeNote: 'Volume vs RP landmarks appears here once you’ve logged sessions across your training days.',
+    weekStats: history.length === 0 && S.weightLog.length === 0 && kcalToday === 0
+      ? []
+      : [
+          { k: 'Sessions logged', v: String(history.length) },
+          { k: 'Calories logged today', v: kcalToday > 0 ? fmt(kcalToday) + ' kcal' : 'None yet' },
+          { k: 'Weight entries', v: String(S.weightLog.length) }
+        ],
     photos: S.photoSlots.map(function(p, i){
       return {
         label: p.label,
@@ -582,24 +566,24 @@ function computeVM(){
     weightLogView: S.weightLog.slice().reverse().map(function(w, i){
       return { d: w.d, kg: w.kg + ' ' + unit, bg: i === 0 ? '#1d1d20' : 'transparent', fg: i === 0 ? '#f2f2f3' : '#8d8d92' };
     }),
-    bodyAvg: bodyAvg.toFixed(1),
-    bodyNote: weightTrend >= 0
+    bodyAvg: wl.length ? bodyAvg.toFixed(1) : '—',
+    bodyEmpty: wl.length === 0,
+    bodyNote: wl.length === 0
+      ? 'No weight logged yet — enter today’s weight below to start tracking.'
+      : wl.length === 1
+      ? 'First entry logged. Add a few more to see a trend.'
+      : weightTrend >= 0
       ? '+' + weightTrend.toFixed(1) + ' ' + unit + ' since the first entry. On a cut that is the wrong direction — check the weekly calorie average.'
-      : weightTrend.toFixed(1) + ' ' + unit + ' since the first entry, about ' + weeklyRate.toFixed(1) + ' ' + unit +
-        ' per week. ' + (bodyAvg > 82 ? (bodyAvg - 82).toFixed(1) + ' to go before 82 — roughly ' + weeksLeft + ' weeks at this rate.' : 'Target reached.'),
-    measures: measuresAll.filter(function(m){ return S.delMeasures.indexOf(m.k) < 0; }).map(function(m){
-      return Object.assign({}, m, { del: function(){ S.delMeasures = S.delMeasures.concat([m.k]); } });
-    }),
-    friends: [
-      { n: 'Ihor', meta: 'MESO 1 · W2 · Lower Heavy today', tag: 'bulk' },
-      { n: 'Dana', meta: 'MESO 3 · W5 · 96 sets this week', tag: 'cut' },
-      { n: 'Oleh', meta: 'Deload · W6', tag: 'deload' }
-    ],
+      : weightTrend.toFixed(1) + ' ' + unit + ' since the first entry, about ' + weeklyRate.toFixed(1) + ' ' + unit + ' per week.',
+    measures: [],
+    measuresEmpty: true,
+    friends: [],
+    friendId: S.friendId,
     phases: phaseNames.map(function(p){
       return { label: p, bg: phase === p ? '#f2f2f3' : 'transparent', fg: phase === p ? '#0b0b0c' : muted, go: function(){ S.phase = p; } };
     }),
     goals: [
-      { k: 'Target weight', v: '82 ' + unit },
+      { k: 'Target weight', v: 'Not set' },
       { k: 'Calories / day', v: String(kcalGoal) },
       { k: 'Protein, g', v: '180' },
       { k: 'Mesocycle length', v: weeks + ' weeks' },
@@ -817,8 +801,8 @@ function screenDash(vm){
   '<h2 style="margin:8px 0 0;font-size:27px;font-weight:700;letter-spacing:-0.02em;">' + esc(vm.greeting) + '</h2>' +
   '<div style="margin-top:4px;font-size:13px;color:#8d8d92;">' + esc(vm.weekLabel) + ' · ' + esc(vm.phaseShort) + '</div>' +
   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;">' +
-    '<div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;"><div style="font-size:12px;color:#8d8d92;">Sessions this week</div><div style="margin-top:6px;font-size:30px;font-weight:700;letter-spacing:-0.02em;">' + esc(vm.dashSessions) + '</div></div>' +
-    '<div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;"><div style="font-size:12px;color:#8d8d92;">Tonnage, week</div><div style="margin-top:6px;font-size:30px;font-weight:700;letter-spacing:-0.02em;">' + esc(vm.dashTonnage) + '</div></div>' +
+    '<div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;"><div style="font-size:12px;color:#8d8d92;">Sessions logged</div><div style="margin-top:6px;font-size:30px;font-weight:700;letter-spacing:-0.02em;">' + esc(vm.dashSessions) + '</div></div>' +
+    '<div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;"><div style="font-size:12px;color:#8d8d92;">Tonnage, this day</div><div style="margin-top:6px;font-size:30px;font-weight:700;letter-spacing:-0.02em;">' + esc(vm.dashTonnage) + '</div></div>' +
   '</div>' +
   '<div style="margin-top:10px;background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;">' +
     '<div style="display:flex;align-items:baseline;justify-content:space-between;"><span style="font-size:12px;color:#8d8d92;">Calories eaten</span><span style="font-size:13px;font-weight:600;color:#b4b4ba;">' + esc(vm.calPctLabel) + '</span></div>' +
@@ -891,6 +875,17 @@ function screenWorkout(vm){
     '<div><div style="font-size:11px;color:#8d8d92;">Deload</div><div style="margin-top:3px;font-size:16px;font-weight:700;">' + esc(vm.deloadLabel) + '</div></div>' +
   '</div>';
   html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;"><div style="min-width:0;font-size:12px;line-height:1.4;color:#8d8d92;">' + esc(vm.dayNote) + '</div><button class="sq" data-act="goDays" style="cursor:pointer;flex-shrink:0;display:flex;align-items:center;gap:6px;min-height:38px;padding:0 12px;border-radius:999px;background:#1f1f22;border:1px solid #2a2a2e;font-size:12.5px;font-weight:600;color:#cfcfd4;">' + ICONS.edit + 'Edit day</button></div>';
+
+  if (vm.dayEmpty) {
+    html += '<div style="margin-top:22px;background:#18181a;border:1px solid #232326;border-radius:14px;padding:16px;">' +
+      '<div style="font-size:15px;font-weight:700;">This day has no exercises yet</div>' +
+      '<div style="margin-top:6px;font-size:12.5px;line-height:1.5;color:#8d8d92;">Add exercises from your library, or create your own — every exercise you add here becomes yours to reuse in any day.</div>' +
+    '</div>';
+    html += '<button class="sq" data-act="openAdd" style="cursor:pointer;width:100%;margin-top:12px;min-height:50px;border-radius:14px;background:#f2f2f3;border:0;color:#0b0b0c;font-size:15px;font-weight:700;">+ Add exercise to ' + esc(vm.dayId) + '</button>';
+    html += '<button class="sq" data-act="goHistory" style="cursor:pointer;width:100%;margin-top:8px;min-height:46px;border-radius:14px;background:transparent;border:1px solid #232326;color:#b4b4ba;font-size:14px;font-weight:600;">Workout history · ' + esc(vm.historyCount) + '</button>';
+    return html;
+  }
+
   html += '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:22px 0 10px;"><div style="min-width:0;"><h3 style="margin:0;font-size:18px;font-weight:600;">' + esc(vm.exName) + '</h3><div style="font-size:12px;color:#8d8d92;margin-top:2px;">' + esc(vm.exTags) + '</div></div><button class="sq" data-act="headAction" style="cursor:pointer;flex-shrink:0;min-height:38px;padding:0 12px;border-radius:999px;background:#1f1f22;border:1px solid #2a2a2e;font-size:12.5px;font-weight:600;color:#cfcfd4;">' + esc(vm.headActionLabel) + '</button></div>';
 
   if (vm.isSuperset) {
@@ -1039,14 +1034,14 @@ function screenHistory(vm){
     '<div><div style="font-size:11px;color:#8d8d92;">Regressed</div><div style="margin-top:3px;font-size:18px;font-weight:700;color:#d0897d;">' + esc(vm.historyDown) + '</div></div>' +
   '</div>';
   html += '<div style="margin-top:14px;background:#18181a;border:1px solid #232326;border-radius:14px;overflow:hidden;">' +
-    vm.history.map(function(h, i){
+    (vm.history.length ? vm.history.map(function(h, i){
       return '<div class="sq" data-act="history[' + i + '].go" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 14px;border-bottom:1px solid #202024;min-height:58px;">' +
         '<div style="width:46px;flex-shrink:0;"><div style="font-size:14px;font-weight:700;">' + esc(h.id) + '</div><div style="font-size:11px;color:#8d8d92;">' + esc(h.date) + '</div></div>' +
         '<div style="flex:1;min-width:0;"><div style="font-size:14.5px;font-weight:500;">' + esc(h.t) + '</div><div style="font-size:12px;color:#8d8d92;margin-top:2px;">' + esc(h.meta) + '</div></div>' +
         '<div style="text-align:right;"><div style="font-size:15px;font-weight:700;color:' + h.color + ';">' + esc(h.delta) + '</div><div style="font-size:11px;color:#8d8d92;">' + esc(h.label) + '</div></div>' +
         '<button class="sq" data-act="history[' + i + '].del" aria-label="Delete session" style="cursor:pointer;background:none;border:0;padding:6px 0 6px 8px;color:#8d8d92;line-height:0;">' + ICONS.trash + '</button>' +
       '</div>';
-    }).join('') +
+    }).join('') : '<div style="padding:16px 14px;font-size:13px;line-height:1.5;color:#8d8d92;">No sessions logged yet. Save a workout to start building history.</div>') +
   '</div>';
   return html;
 }
@@ -1088,13 +1083,13 @@ function screenFood(vm){
     vm.chips.map(function(c, i){ return '<button class="sq" data-act="chips[' + i + '].go" style="cursor:pointer;min-height:38px;padding:0 13px;border-radius:999px;background:#1f1f22;border:1px solid #2a2a2e;font-size:13px;color:#e4e4e7;">' + esc(c.n) + ' · ' + esc(c.k) + '</button>'; }).join('') +
   '</div>';
   html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Eaten today</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;overflow:hidden;">' +
-    vm.meals.map(function(m, i){
+    (vm.mealsEmpty ? '<div style="padding:16px 14px;font-size:13px;line-height:1.5;color:#8d8d92;">Nothing logged yet — scan a barcode, add a custom food, or tap a quick-add chip above.</div>' : vm.meals.map(function(m, i){
       return '<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #202024;min-height:46px;">' +
         '<div style="flex:1;min-width:0;"><div style="font-size:14.5px;font-weight:500;">' + esc(m.n) + '</div><div style="font-size:12px;color:#8d8d92;margin-top:2px;">' + esc(m.meta) + '</div></div>' +
         '<div style="font-size:16px;font-weight:700;">' + esc(m.k) + '</div>' +
         '<button class="sq" data-act="meals[' + i + '].del" aria-label="Remove" style="cursor:pointer;background:none;border:0;padding:6px;color:#8d8d92;line-height:0;">' + ICONS.close + '</button>' +
       '</div>';
-    }).join('') +
+    }).join('')) +
   '</div>';
   return html;
 }
@@ -1107,17 +1102,18 @@ function screenCoach(vm){
     '<div style="display:flex;gap:8px;margin-top:14px;"><button class="sq" style="cursor:pointer;min-height:42px;padding:0 14px;border-radius:12px;background:#f2f2f3;border:0;color:#0b0b0c;font-size:13px;font-weight:700;">Generate deload</button><button class="sq" style="cursor:pointer;min-height:42px;padding:0 14px;border-radius:12px;background:#1f1f22;border:1px solid #2a2a2e;color:#f2f2f3;font-size:13px;font-weight:600;">Ask</button></div>' +
   '</div>';
   html += '<button class="sq" data-act="goHistory" style="cursor:pointer;width:100%;margin-top:12px;min-height:48px;border-radius:14px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#18181a;border:1px solid #232326;font-size:14px;font-weight:600;color:#e4e4e7;"><span>Workout history · ' + esc(vm.historyCount) + '</span>' + ICONS.chevR('#8d8d92') + '</button>';
-  html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Volume vs RP landmarks</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;"><div style="display:flex;flex-direction:column;gap:12px;">' +
-    vm.volume.map(function(v){
-      return '<div><div style="display:flex;justify-content:space-between;font-size:12.5px;"><span>' + esc(v.m) + '</span><span style="color:#8d8d92;">' + esc(v.sets) + ' sets · ' + esc(v.zone) + '</span></div><div style="position:relative;height:8px;border-radius:999px;background:#202024;margin-top:6px;overflow:hidden;"><div style="height:100%;width:' + v.pct + ';background:' + v.color + ';"></div></div></div>';
-    }).join('') +
-  '</div><div style="margin-top:12px;font-size:12px;color:#8d8d92;">Amber sits at MRV, grey is below MEV.</div></div>';
-  html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Bench Press · working weight</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;">' +
-    '<svg viewBox="0 0 320 110" style="width:100%;height:110px;display:block;"><g stroke="#26262a" stroke-width="1"><line x1="0" y1="20" x2="320" y2="20"></line><line x1="0" y1="55" x2="320" y2="55"></line><line x1="0" y1="90" x2="320" y2="90"></line></g><polyline points="10,88 62,76 114,70 166,52 218,44 270,30 310,26" fill="none" stroke="#f2f2f3" stroke-width="1.8" stroke-linejoin="round"></polyline><g fill="#f2f2f3"><circle cx="10" cy="88" r="2.5"></circle><circle cx="62" cy="76" r="2.5"></circle><circle cx="114" cy="70" r="2.5"></circle><circle cx="166" cy="52" r="2.5"></circle><circle cx="218" cy="44" r="2.5"></circle><circle cx="270" cy="30" r="2.5"></circle><circle cx="310" cy="26" r="2.5"></circle></g></svg>' +
-    '<div style="display:flex;justify-content:space-between;font-size:11.5px;color:#8d8d92;"><span>W1 · 95 ' + esc(vm.unitLabel) + '</span><span>W3 · 102.5 ' + esc(vm.unitLabel) + '</span><span style="color:#6fbf8f;">+7.9 %</span></div>' +
+  html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Volume vs RP landmarks</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;">' +
+    (vm.volume.length ? '<div style="display:flex;flex-direction:column;gap:12px;">' +
+      vm.volume.map(function(v){
+        return '<div><div style="display:flex;justify-content:space-between;font-size:12.5px;"><span>' + esc(v.m) + '</span><span style="color:#8d8d92;">' + esc(v.sets) + ' sets · ' + esc(v.zone) + '</span></div><div style="position:relative;height:8px;border-radius:999px;background:#202024;margin-top:6px;overflow:hidden;"><div style="height:100%;width:' + v.pct + ';background:' + v.color + ';"></div></div></div>';
+      }).join('') +
+    '</div><div style="margin-top:12px;font-size:12px;color:#8d8d92;">Amber sits at MRV, grey is below MEV.</div>' : '<div style="font-size:13px;line-height:1.5;color:#8d8d92;">' + esc(vm.volumeNote) + '</div>') +
+  '</div>';
+  html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Working weight trend</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;">' +
+    '<div style="font-size:13px;line-height:1.5;color:#8d8d92;">Log the same exercise across a few sessions and its working-weight trend will chart here.</div>' +
   '</div>';
   html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">This week vs last</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;overflow:hidden;">' +
-    vm.weekStats.map(function(w){ return '<div style="display:flex;align-items:center;gap:10px;padding:13px 14px;border-bottom:1px solid #202024;min-height:44px;"><div style="flex:1;font-size:14px;">' + esc(w.k) + '</div><div style="font-size:13px;color:#8d8d92;">' + esc(w.v) + '</div></div>'; }).join('') +
+    (vm.weekStats.length ? vm.weekStats.map(function(w){ return '<div style="display:flex;align-items:center;gap:10px;padding:13px 14px;border-bottom:1px solid #202024;min-height:44px;"><div style="flex:1;font-size:14px;">' + esc(w.k) + '</div><div style="font-size:13px;color:#8d8d92;">' + esc(w.v) + '</div></div>'; }).join('') : '<div style="padding:16px 14px;font-size:13px;line-height:1.5;color:#8d8d92;">No data yet.</div>') +
   '</div>';
   return html;
 }
@@ -1143,13 +1139,13 @@ function screenBody(vm){
   '</div>';
   html += '<div style="display:flex;gap:8px;margin-top:10px;"><button class="sq" data-act="clearPhotos" style="cursor:pointer;flex:1;min-height:42px;border-radius:12px;background:#1f1f22;border:1px solid #2a2a2e;color:#f2f2f3;font-size:13.5px;font-weight:600;">Clear photos</button><button class="sq" data-act="addPhotoWeek" style="cursor:pointer;flex:1;min-height:42px;border-radius:12px;background:transparent;border:1px solid #232326;color:#b4b4ba;font-size:13.5px;font-weight:600;">Compare another week</button></div>';
   html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Measurements</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;overflow:hidden;">' +
-    vm.measures.map(function(m, i){
+    (vm.measures.length ? vm.measures.map(function(m, i){
       return '<div style="display:flex;align-items:center;padding:12px 14px;border-bottom:1px solid #202024;min-height:44px;"><div style="flex:1;font-size:14px;">' + esc(m.k) + '</div><div style="font-size:16px;font-weight:700;">' + esc(m.v) + '</div><div style="width:54px;text-align:right;font-size:12px;color:#8d8d92;">' + esc(m.d) + '</div><button class="sq" data-act="measures[' + i + '].del" aria-label="Delete measurement" style="cursor:pointer;background:none;border:0;padding:6px 0 6px 8px;color:#8d8d92;line-height:0;">' + ICONS.trash + '</button></div>';
-    }).join('') +
+    }).join('') : '<div style="padding:16px 14px;font-size:13px;line-height:1.5;color:#8d8d92;">No measurements yet.</div>') +
   '</div>';
-  html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Friends</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;"><div style="width:54px;height:54px;border-radius:12px;border:1px solid #2a2a2e;display:flex;align-items:center;justify-content:center;">' + ICONS.qr + '</div><div style="flex:1;"><div style="font-size:14px;">Your ID: <span style="font-weight:700;">VNS-4192</span></div><div style="font-size:12px;color:#8d8d92;margin-top:3px;">Friends are added by ID or QR only. No public search, no discovery.</div></div></div>';
+  html += '<h3 style="margin:22px 0 10px;font-size:17px;font-weight:600;">Friends</h3><div style="background:#18181a;border:1px solid #232326;border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;"><div style="width:54px;height:54px;border-radius:12px;border:1px solid #2a2a2e;display:flex;align-items:center;justify-content:center;">' + ICONS.qr + '</div><div style="flex:1;"><div style="font-size:14px;">Your ID: <span style="font-weight:700;">' + esc(vm.friendId) + '</span></div><div style="font-size:12px;color:#8d8d92;margin-top:3px;">Friends are added by ID or QR only. No public search, no discovery.</div></div></div>';
   html += '<div style="margin-top:12px;background:#18181a;border:1px solid #232326;border-radius:14px;overflow:hidden;">' +
-    vm.friends.map(function(f){ return '<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #202024;min-height:46px;"><div style="flex:1;"><div style="font-size:14.5px;font-weight:500;">' + esc(f.n) + '</div><div style="font-size:12px;color:#8d8d92;margin-top:2px;">' + esc(f.meta) + '</div></div><span style="padding:4px 10px;border-radius:999px;background:#202024;font-size:11.5px;color:#b4b4ba;">' + esc(f.tag) + '</span></div>'; }).join('') +
+    (vm.friends.length ? vm.friends.map(function(f){ return '<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #202024;min-height:46px;"><div style="flex:1;"><div style="font-size:14.5px;font-weight:500;">' + esc(f.n) + '</div><div style="font-size:12px;color:#8d8d92;margin-top:2px;">' + esc(f.meta) + '</div></div><span style="padding:4px 10px;border-radius:999px;background:#202024;font-size:11.5px;color:#b4b4ba;">' + esc(f.tag) + '</span></div>'; }).join('') : '<div style="padding:16px 14px;font-size:13px;line-height:1.5;color:#8d8d92;">No friends yet — share your ID or QR code to connect.</div>') +
   '</div>';
   return html;
 }
@@ -1254,7 +1250,23 @@ render();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function(){
-    navigator.serviceWorker.register('./sw.js').catch(function(){});
+    // updateViaCache:'none' stops the browser from serving a stale sw.js out
+    // of its own HTTP cache when checking for updates — without it, a build
+    // can sit "live" but unreachable for anyone whose browser cached the old
+    // worker script. reg.update() forces an immediate check on load, and a
+    // one-time reload on controllerchange gets an already-open tab onto the
+    // new build as soon as it activates, instead of leaving it stuck until
+    // the next manual refresh.
+    var hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(function(reg){
+      reg.update().catch(function(){});
+    }).catch(function(){});
+    var reloadedOnce = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if (!hadController || reloadedOnce) { hadController = true; return; }
+      reloadedOnce = true;
+      window.location.reload();
+    });
   });
 }
 </script>
